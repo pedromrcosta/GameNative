@@ -169,9 +169,9 @@ public class ContentsManager {
         File file = getTmpDir(context);
 
         boolean ret;
-        ret = TarCompressorUtils.extract(TarCompressorUtils.Type.XZ, context, uri, file);
+        ret = TarCompressorUtils.extractUntrusted(TarCompressorUtils.Type.XZ, context, uri, file);
         if (!ret)
-            ret = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context, uri, file);
+            ret = TarCompressorUtils.extractUntrusted(TarCompressorUtils.Type.ZSTD, context, uri, file);
         if (!ret) {
             callback.onFailed(InstallFailedReason.ERROR_BADTAR, null);
             return;

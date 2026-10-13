@@ -164,10 +164,33 @@ public abstract class TarCompressorUtils {
         }
     }
 
+    /**
+     * Extracts an archive the user picked from outside the app (e.g. a .wcp content package).
+     * On top of the name check every extraction gets, this refuses to write through a symlink
+     * the archive planted earlier that points out of the destination.
+     */
+    public static boolean extractUntrusted(Type type, Context context, Uri source, File destination) {
+        if (source == null) return false;
+        try {
+            InputStream inStream = source.toString().startsWith("/")
+                ? new FileInputStream(source.toString())
+                : context.getContentResolver().openInputStream(source);
+            return extract(type, inStream, destination, null, true);
+        }
+        catch (FileNotFoundException e) {
+            return false;
+        }
+    }
+
     private static boolean extract(Type type, InputStream source, File destination, OnExtractFileListener onExtractFileListener) {
+        return extract(type, source, destination, onExtractFileListener, false);
+    }
+
+    private static boolean extract(Type type, InputStream source, File destination, OnExtractFileListener onExtractFileListener, boolean untrusted) {
         if (source == null) return false;
         try (InputStream inStream = getCompressorInputStream(type, source);
              ArchiveInputStream tar = new TarArchiveInputStream(inStream)) {
+            File canonicalDestination = untrusted ? destination.getCanonicalFile() : null;
             TarArchiveEntry entry;
             while ((entry = (TarArchiveEntry)tar.getNextEntry()) != null) {
                 if (!tar.canReadEntryData(entry)) continue;
@@ -179,10 +202,24 @@ public abstract class TarCompressorUtils {
                     continue;
 
                 File file = new File(destination, entryName);
+                if (!FileUtils.isInsideDir(destination, file)) {
+                    Log.e("TarCompressorUtils", "Refusing archive entry outside the destination: " + entryName);
+                    return false;
+                }
 
                 if (onExtractFileListener != null) {
                     file = onExtractFileListener.onExtractFile(file, entry.getSize());
                     if (file == null) continue;
+                }
+
+                if (untrusted) {
+                    // Resolves symlinks already on disk, so an entry written "under" a planted
+                    // link that points elsewhere is caught here.
+                    File parent = file.getParentFile();
+                    if (parent == null || !FileUtils.isInsideDir(canonicalDestination, parent.getCanonicalFile())) {
+                        Log.e("TarCompressorUtils", "Refusing archive entry that escapes through a symlink: " + entryName);
+                        return false;
+                    }
                 }
 
                 if (entry.isDirectory()) {

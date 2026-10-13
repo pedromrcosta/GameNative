@@ -464,12 +464,25 @@ public abstract class FileUtils {
         }
     }
 
+    /**
+     * True when {@code file} sits inside {@code dir} once "." and ".." are resolved. Purely lexical:
+     * pass canonical files when symlinks on disk must be followed too.
+     */
+    public static boolean isInsideDir(File dir, File file) {
+        return Paths.get(file.getAbsolutePath()).normalize()
+            .startsWith(Paths.get(dir.getAbsolutePath()).normalize());
+    }
+
     public static boolean extractZipFromAssets(Context context, String assetName, File destinationDir) {
         try (InputStream inputStream = context.getAssets().open(assetName);
              ZipInputStream zis = new ZipInputStream(inputStream)) {
             ZipEntry entry = zis.getNextEntry();
             while (entry != null) {
                 File outFile = new File(destinationDir, entry.getName());
+                if (!isInsideDir(destinationDir, outFile)) {
+                    Log.e("FileUtils", "Refusing zip entry outside the destination: " + entry.getName());
+                    return false;
+                }
                 if (entry.isDirectory()) {
                     if (!outFile.isDirectory()) outFile.mkdirs();
                 } else {
@@ -500,6 +513,10 @@ public abstract class FileUtils {
             ZipEntry entry = zis.getNextEntry();
             while (entry != null) {
                 File outFile = new File(destinationDir, entry.getName());
+                if (!isInsideDir(destinationDir, outFile)) {
+                    Log.e("FileUtils", "Refusing zip entry outside the destination: " + entry.getName());
+                    return false;
+                }
                 if (entry.isDirectory()) {
                     if (!outFile.isDirectory()) outFile.mkdirs();
                 } else {
