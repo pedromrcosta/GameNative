@@ -173,6 +173,16 @@ object IntentLaunchManager {
         TemporaryConfigStore.setOriginalConfig(appId, config)
     }
 
+    // Any installed app can send LAUNCH_GAME, so these keys are never taken from it: they choose what
+    // runs (executable, arguments, environment) or which host folders the game can reach.
+    private val UNTRUSTED_KEYS = listOf("name", "envVars", "drives", "execArgs", "executablePath", "installPath")
+
+    // Names of drivers, presets and versions the app already ships or installed. No path separators
+    // or ".." so a value can never point outside the app's own content folders.
+    private val TOKEN_REGEX = Regex("[A-Za-z0-9._+ ()@-]{0,128}")
+    private val DESKTOP_THEME_REGEX = Regex("[A-Za-z0-9._#, -]{0,96}")
+    private val WINCOMPONENTS_REGEX = Regex("[A-Za-z0-9_]+=[0-9](,[A-Za-z0-9_]+=[0-9])*")
+
     private fun validateContainerConfig(config: ContainerData): List<String> {
         val issues = mutableListOf<String>()
 
@@ -184,12 +194,41 @@ object IntentLaunchManager {
             issues.add("Invalid CPU list format: ${config.cpuList}. Expected comma-separated numbers (e.g., 0,1,2,3)")
         }
 
+        if (config.cpuListWoW64.isNotEmpty() && !config.cpuListWoW64.matches(Regex("\\d+(,\\d+)*"))) {
+            issues.add("Invalid WoW64 CPU list format: ${config.cpuListWoW64}. Expected comma-separated numbers (e.g., 0,1,2,3)")
+        }
+
         if (!config.videoMemorySize.matches(Regex("\\d+"))) {
             issues.add("Invalid video memory size: ${config.videoMemorySize}. Expected numeric value in MB")
         }
 
-        if (config.drives.isNotEmpty() && !config.drives.matches(Regex("([A-Z]:([^:]+))*"))) {
-            issues.add("Invalid drives format: ${config.drives}. Expected format: LETTER:PATH (e.g., C:/path/to/drive)")
+        if (config.wincomponents.isNotEmpty() && !config.wincomponents.matches(WINCOMPONENTS_REGEX)) {
+            issues.add("Invalid wincomponents: ${config.wincomponents}. Expected name=0/1 pairs separated by commas")
+        }
+
+        if (!config.desktopTheme.matches(DESKTOP_THEME_REGEX)) {
+            issues.add("Invalid desktopTheme: ${config.desktopTheme}")
+        }
+
+        val tokens = mapOf(
+            "graphicsDriver" to config.graphicsDriver,
+            "graphicsDriverVersion" to config.graphicsDriverVersion,
+            "dxwrapper" to config.dxwrapper,
+            "dxwrapperConfig" to config.dxwrapperConfig.removePrefix("version="),
+            "audioDriver" to config.audioDriver,
+            "box86Version" to config.box86Version,
+            "box64Version" to config.box64Version,
+            "box86Preset" to config.box86Preset,
+            "box64Preset" to config.box64Preset,
+            "offScreenRenderingMode" to config.offScreenRenderingMode,
+            "mouseWarpOverride" to config.mouseWarpOverride,
+            "shaderBackend" to config.shaderBackend,
+            "useGLSL" to config.useGLSL,
+        )
+        for ((key, value) in tokens) {
+            if (!value.matches(TOKEN_REGEX) || value.contains("..")) {
+                issues.add("Invalid $key: $value")
+            }
         }
 
         return issues
@@ -202,11 +241,16 @@ object IntentLaunchManager {
 
         val json = JSONObject(jsonString)
 
+        val ignoredKeys = UNTRUSTED_KEYS.filter { json.has(it) }
+        if (ignoredKeys.isNotEmpty()) {
+            Timber.w("[IntentLaunchManager]: Ignoring container_config keys external apps may not set: ${ignoredKeys.joinToString()}")
+        }
+
         // Only include non-default values to avoid overriding existing container settings
         val config = ContainerData(
-            name = if (json.has("name")) json.getString("name") else "",
+            name = "",
             screenSize = if (json.has("screenSize")) json.getString("screenSize") else PluviaApp.getDefaultScreenSize(),
-            envVars = if (json.has("envVars")) json.getString("envVars") else Container.DEFAULT_ENV_VARS,
+            envVars = Container.DEFAULT_ENV_VARS,
             graphicsDriver = if (json.has("graphicsDriver")) json.getString("graphicsDriver") else Container.DEFAULT_GRAPHICS_DRIVER,
             graphicsDriverVersion = if (json.has("graphicsDriverVersion")) json.getString("graphicsDriverVersion") else "",
             dxwrapper = if (json.has("dxwrapper")) json.getString("dxwrapper") else Container.DEFAULT_DXWRAPPER,
@@ -217,10 +261,10 @@ object IntentLaunchManager {
             },
             audioDriver = if (json.has("audioDriver")) json.getString("audioDriver") else Container.DEFAULT_AUDIO_DRIVER,
             wincomponents = if (json.has("wincomponents")) json.getString("wincomponents") else Container.DEFAULT_WINCOMPONENTS,
-            drives = if (json.has("drives")) json.getString("drives") else Container.DEFAULT_DRIVES,
-            execArgs = if (json.has("execArgs")) json.getString("execArgs") else "",
-            executablePath = if (json.has("executablePath")) json.getString("executablePath") else "",
-            installPath = if (json.has("installPath")) json.getString("installPath") else "",
+            drives = Container.DEFAULT_DRIVES,
+            execArgs = "",
+            executablePath = "",
+            installPath = "",
             showFPS = if (json.has("showFPS")) json.getBoolean("showFPS") else false,
             launchRealSteam = if (json.has("launchRealSteam")) json.getBoolean("launchRealSteam") else false,
             launchBionicSteam = if (json.has("launchBionicSteam")) json.getBoolean("launchBionicSteam") else false,
@@ -263,7 +307,7 @@ object IntentLaunchManager {
 
         val validationIssues = validateContainerConfig(config)
         if (validationIssues.isNotEmpty()) {
-            Timber.w("[IntentLaunchManager]: Container configuration validation issues: ${validationIssues.joinToString("; ")}")
+            throw IllegalArgumentException("Container configuration rejected: ${validationIssues.joinToString("; ")}")
         }
 
         return config

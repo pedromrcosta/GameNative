@@ -158,6 +158,9 @@ public class AdrenotoolsManager {
             ZipEntry entry = zis.getNextEntry();
             while (entry != null) {
                 File dstFile = new File(tmpDir, entry.getName());
+                if (!FileUtils.isInsideDir(tmpDir, dstFile)) {
+                    throw new IOException("Driver zip entry outside the destination: " + entry.getName());
+                }
                 Files.copy(zis, dstFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 entry = zis.getNextEntry();
             }
@@ -165,7 +168,9 @@ public class AdrenotoolsManager {
             if (new File(tmpDir, "meta.json").exists()) {
                 name = getDriverName(tmpDir.getName());
                 File dst = new File(adrenotoolsContentDir, name);
-                if (!dst.exists() && !name.equals(""))
+                // The name comes from the zip's meta.json; it must stay a plain folder name.
+                boolean safeName = !name.isEmpty() && !name.contains("/") && !name.equals(".") && !name.equals("..");
+                if (safeName && !dst.exists())
                     tmpDir.renameTo(dst);
                 else {
                     name = "";
@@ -179,7 +184,7 @@ public class AdrenotoolsManager {
         }
         catch (IOException e) {
             Log.d("AdrenotoolsManager", "Failed to install driver, a valid driver has not been selected");
-            tmpDir.delete();
+            FileUtils.delete(tmpDir);
         }
 
         return name;
